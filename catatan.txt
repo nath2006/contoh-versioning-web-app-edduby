@@ -1,0 +1,6 @@
+1. git checkout main => balik ke dalam branch main
+2. git pull origin main => nge-pull update code di branch main biar gak conflig
+3. git status 
+
+4. git tag -a v1.0.0 -m "Release version 1.0.0" => kamu buat tag dari versi aplikasi kamu 
+5. git push origin v1.0.0

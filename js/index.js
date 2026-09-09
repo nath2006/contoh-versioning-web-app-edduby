@@ -1,141 +1,137 @@
-//function untuk mengambil dom by id
-//pemanggilannya cnth :
-//$('card') : artinya kamu ambil sebuah tag dengan id "card"
-const $ = (id) => {
-  return document.getElementById(id);
-}
+// Helper untuk mengambil elemen berdasarkan id agar kode lebih ringkas.
+const $ = (id) => document.getElementById(id);
 
-const btn = $("btn");
-const spinner = $("spinner");
-const cards = $("cards");
-const loc = $("loc");
-const addr = $("addr");
-const weather = $("weather");
-const country = $("country");
+const elements = {
+  locationButton: $("locationButton"),
+  refreshButton: $("refreshButton"),
+  buttonText: $("buttonText"),
+  status: $("status"),
+  loader: $("loader"),
+  cards: $("cards"),
+};
 
-btn.addEventListener("click", () => {
-  if(!navigator.geolocation){
-    alert("Browser Anda tidak mendukung Geolocation.");
+const WEATHER_LABELS = {
+  0: "Cerah", 1: "Sebagian besar cerah", 2: "Berawan sebagian", 3: "Mendung",
+  45: "Berkabut", 48: "Kabut berembun", 51: "Gerimis ringan", 53: "Gerimis",
+  55: "Gerimis lebat", 61: "Hujan ringan", 63: "Hujan sedang", 65: "Hujan lebat",
+  80: "Hujan lokal ringan", 81: "Hujan lokal", 82: "Hujan lokal lebat",
+  95: "Badai petir", 96: "Badai petir dan hujan es", 99: "Badai petir kuat",
+};
+
+elements.locationButton.addEventListener("click", getLocation);
+elements.refreshButton.addEventListener("click", getLocation);
+
+function getLocation() {
+  if (!("geolocation" in navigator)) {
+    showStatus("Browser ini tidak mendukung Geolocation API.", "error");
     return;
   }
 
-  spinner.classList.remove("d-none");
-  cards.classList.remove("d-none");
-
-  navigator.geolocation.getCurrentPosition(load, handleError, {
+  setLoading(true);
+  navigator.geolocation.getCurrentPosition(loadDashboard, handleLocationError, {
     enableHighAccuracy: true,
-    timeout: 10000,
+    timeout: 10_000,
+    maximumAge: 0,
   });
-});
+}
 
-async function load(position){
-  try{
-    //variabel untuk mengambil data dari geolocation
-    const  {latitude, longitude, accuracy} = position.coords; 
+async function loadDashboard(position) {
+  const { latitude, longitude, accuracy } = position.coords;
 
-    //reverse geolocation (untuk validasi geolocation, agar lebih akurat)
-    const geoResponse = await fetch(
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`
-    )
+  const addressUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=id`;
+  const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m&timezone=auto`;
 
-    if(!geoResponse.ok){
-      throw new Error("Gagal mengambil data lokasi!");
-    }
+  try {
+    // Kedua request tidak saling menunggu, jadi dijalankan bersamaan.
+    const [addressResponse, weatherResponse] = await Promise.all([
+      fetch(addressUrl),
+      fetch(weatherUrl),
+    ]);
 
-    //javascript object notation
-    const geo = await geoResponse.json();
-    
-    const weatherResponse = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`
-    )
+    if (!addressResponse.ok) throw new Error(`API alamat gagal (${addressResponse.status}).`);
+    if (!weatherResponse.ok) throw new Error(`API cuaca gagal (${weatherResponse.status}).`);
 
-    if(!weatherResponse.ok){
-      throw new Error("Gagal mengambil data cuaca!");
-    }
+    const [address, weather] = await Promise.all([
+      addressResponse.json(),
+      weatherResponse.json(),
+    ]);
 
-    const weatherData = await weatherResponse.json();
-
-    //flag 
-    const flagUrl = `https://flagcdn.com/w320/${geo.countryCode.toLowerCase()}.png`;
-
-    spinner.classList.add("d-none");
-    cards.classList.remove("d-none");
-
-    //card lokasinya 
-    loc.innerHTML = 
-    `
-    <h4>📍 Lokasi </h4>
-    <p>
-      <b>Latitude : ${latitude.toFixed(6)}</b>
-      <b>Longitude : ${longitude.toFixed(6)}</b>
-      <b>Akurasi : ${Math.round(accuracy)}</b>
-    </p>
-    `;
-
-    //Card Alamat
-    addr.innerHTML = 
-    `
-    <h4>Alamat </h4>
-    <p>
-      <b>Kota: ${geo.city || geo.locality || "-"}</b>
-      <b>Provinsi : ${geo.principalSubdivision}</b>
-      <b>Negara : ${geo.countryName}</b>
-    </p>
-    `;
-
-    //Card Cuaca
-    weather.innerHTML = 
-    `
-    <h4>Cuaca Saat Ini </h4>
-    <p>
-      <b>Suhu: ${weatherData.current.temperature_2m}</b>
-      <b>Kecepatan Angin: ${weatherData.current.wind_speed_10m}</b>
-    </p>
-    `;
-
-    //Card negara
-    country.innerHTML = 
-    `
-    <h4>Informasi Negara </h4>
-    <div class="text-center mb-3">
-      <img src="${flagUrl}" class="img-fluid rounded shadow" style="max-width:120px">
-    </div>
-    <p>
-      <b>Nama Negara: ${geo.countryName}</b>
-      <b>Kode Negara : ${geo.countryCode}</b>
-      <b>Benua : ${geo.continent}</b>
-    </p>
-    `;
-
-    history.pushState({}, "", "#dashboard");
-  }catch(err){
-    spinner.classList.add('d-none');
-
-    alert(err.message);
-    console.log(err);
+    renderDashboard({ latitude, longitude, accuracy, address, weather });
+    showStatus(`Data berhasil diperbarui pada ${formatTime(new Date())}.`, "success");
+    history.replaceState({ dashboard: true }, "", "#dashboard");
+  } catch (error) {
+    console.error(error);
+    showStatus(`Data belum dapat ditampilkan. ${error.message}`, "error");
+  } finally {
+    setLoading(false);
   }
 }
 
+function renderDashboard({ latitude, longitude, accuracy, address, weather }) {
+  const current = weather.current;
+  const countryCode = (address.countryCode || "").toLowerCase();
 
-function handleError(error){
-  spinner.classList.add("d-none");
+  setText("latitude", latitude.toFixed(6));
+  setText("longitude", longitude.toFixed(6));
+  setText("accuracy", `± ${Math.round(accuracy)} meter`);
+  setText("city", address.city || address.locality || "Tidak tersedia");
+  setText("province", address.principalSubdivision || "Tidak tersedia");
+  setText("countryName", address.countryName || "Tidak tersedia");
+  setText("temperature", Math.round(current.temperature_2m));
+  setText("weatherDescription", WEATHER_LABELS[current.weather_code] || "Kondisi tidak diketahui");
+  setText("windSpeed", `${current.wind_speed_10m} ${weather.current_units.wind_speed_10m}`);
+  setText("windDirection", `${current.wind_direction_10m}°`);
+  setText("countryFullName", address.countryName || "Tidak tersedia");
+  setText("countryCode", address.countryCode || "—");
+  setText("continent", address.continent || "—");
 
-  switch (error.code){
-    case error.PERMISSION_DENIED:
-      alert("Izin lokasi ditolak.");
-      break;
-    case error.POSITION.UNAVAILABLE:
-      alert("Lokasi tidak tersedia.");
-      break;
-    case error.TIMEOUT:
-      alert("Terjadi kesalahan saat mengambil lokasi");
-      break;
-    default:
-      alert("Terjadi kesalahan saat mengambil lokasi")
+  const flag = $("countryFlag");
+  if (countryCode) {
+    flag.src = `https://flagcdn.com/w160/${countryCode}.png`;
+    flag.alt = `Bendera ${address.countryName}`;
+    flag.hidden = false;
+  } else {
+    flag.hidden = true;
   }
+
+  elements.cards.hidden = false;
+  elements.refreshButton.hidden = false;
 }
 
+function setText(id, value) {
+  $(id).textContent = value;
+}
 
-window.addEventListener("popstate", () => {
-  console.log("History berubah")
-});
+function setLoading(isLoading) {
+  elements.loader.hidden = !isLoading;
+  elements.status.hidden = isLoading;
+  elements.locationButton.disabled = isLoading;
+  elements.refreshButton.disabled = isLoading;
+  elements.buttonText.textContent = isLoading ? "Mengambil data…" : "Gunakan lokasi saya";
+}
+
+function showStatus(message, type = "info") {
+  elements.status.hidden = false;
+  elements.status.className = `status status-${type}`;
+  elements.status.querySelector("p").textContent = message;
+  elements.status.querySelector(".status-icon").textContent = type === "error" ? "!" : type === "success" ? "✓" : "i";
+}
+
+function handleLocationError(error) {
+  const messages = {
+    [error.PERMISSION_DENIED]: "Izin lokasi ditolak. Aktifkan izin lokasi pada pengaturan browser.",
+    [error.POSITION_UNAVAILABLE]: "Lokasi tidak tersedia. Pastikan GPS atau layanan lokasi aktif.",
+    [error.TIMEOUT]: "Waktu pencarian lokasi habis. Silakan coba kembali.",
+  };
+
+  setLoading(false);
+  showStatus(messages[error.code] || "Terjadi kesalahan saat mengambil lokasi.", "error");
+}
+
+function formatTime(date) {
+  return new Intl.DateTimeFormat("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
